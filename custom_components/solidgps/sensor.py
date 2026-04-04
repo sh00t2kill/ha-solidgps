@@ -40,6 +40,7 @@ async def async_setup_entry(
             SolidGPSLastUpdateSensor(coordinator, imei),
             SolidGPSNextUpdateSensor(coordinator, imei),
             SolidGPSDistanceSensor(coordinator, imei),
+            SolidGPSDistanceKmSensor(coordinator, imei),
         ]
     async_add_entities(entities)
 
@@ -147,4 +148,23 @@ class SolidGPSDistanceSensor(_SolidGPSBaseSensor):
     @property
     def native_value(self) -> int | None:
         return self._info().get("DistanceTravelled")
+
+
+class SolidGPSDistanceKmSensor(_SolidGPSBaseSensor):
+    _attr_name = "Lifetime Distance (km)"
+    _attr_native_unit_of_measurement = UnitOfLength.KILOMETERS
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_icon = "mdi:map-marker-distance"
+    _attr_suggested_display_precision = 2
+
+    def __init__(self, coordinator, imei):
+        super().__init__(coordinator, imei)
+        self._attr_unique_id = f"{imei}_distance_km"
+
+    @property
+    def native_value(self) -> float | None:
+        metres = self._info().get("DistanceTravelled")
+        if metres is None:
+            return None
+        return round(metres / 1000, 2)
 
