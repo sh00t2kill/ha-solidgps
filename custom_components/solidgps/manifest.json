@@ -7,5 +7,5 @@
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/sh00t2kill/ha-solidgps/issues",
   "requirements": ["requests>=2.28.0"],
-  "version": "1.0.0"
+  "version": "1.0.1"
 }
