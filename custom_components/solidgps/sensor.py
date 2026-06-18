@@ -59,9 +59,9 @@ class _SolidGPSBaseSensor(CoordinatorEntity[SolidGPSCoordinator], SensorEntity):
         info = self.coordinator.data[self._imei]["device_info"]
         return {
             "identifiers": {(DOMAIN, self._imei)},
-            "name": info.get("Nickname", self._imei),
+            "name": info.get("nickname", self._imei),
             "manufacturer": "Solid GPS",
-            "model": info.get("DeviceType"),
+            "model": info.get("device_type"),
         }
 
     def _info(self):
@@ -80,7 +80,7 @@ class SolidGPSBatterySensor(_SolidGPSBaseSensor):
 
     @property
     def native_value(self) -> int | None:
-        return self._info().get("BatteryStatus")
+        return self._info().get("bat_status")
 
 
 class SolidGPSStatusSensor(_SolidGPSBaseSensor):
@@ -93,7 +93,7 @@ class SolidGPSStatusSensor(_SolidGPSBaseSensor):
 
     @property
     def native_value(self) -> str:
-        raw = self._info().get("DeviceStatus", 0)
+        raw = self._info().get("dev_status", 0)
         return DEVICE_STATUS_MAP.get(raw, f"Unknown ({raw})")
 
 
@@ -107,7 +107,7 @@ class SolidGPSLastUpdateSensor(_SolidGPSBaseSensor):
 
     @property
     def native_value(self) -> datetime.datetime | None:
-        epoch = self._info().get("LastUpdateUTC")
+        epoch = self._info().get("latest_utc")
         if epoch:
             return datetime.datetime.fromtimestamp(epoch, tz=datetime.timezone.utc)
         return None
@@ -123,11 +123,11 @@ class SolidGPSNextUpdateSensor(_SolidGPSBaseSensor):
 
     @property
     def native_value(self) -> datetime.datetime | None:
-        raw = self._info().get("NextExpectedUTC")
+        raw = self._info().get("next_update")
         if not raw:
             return None
         try:
-            # Format: "2026-04-04 01:29:17" — treat as UTC
+            # Format: "2026-06-17 22:41:32" — treat as UTC
             return datetime.datetime.strptime(raw, "%Y-%m-%d %H:%M:%S").replace(
                 tzinfo=datetime.timezone.utc
             )
@@ -147,7 +147,7 @@ class SolidGPSDistanceSensor(_SolidGPSBaseSensor):
 
     @property
     def native_value(self) -> int | None:
-        return self._info().get("DistanceTravelled")
+        return self._info().get("total_distance")
 
 
 class SolidGPSDistanceKmSensor(_SolidGPSBaseSensor):
@@ -163,7 +163,7 @@ class SolidGPSDistanceKmSensor(_SolidGPSBaseSensor):
 
     @property
     def native_value(self) -> float | None:
-        metres = self._info().get("DistanceTravelled")
+        metres = self._info().get("total_distance")
         if metres is None:
             return None
         return round(metres / 1000, 2)

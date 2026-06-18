@@ -26,7 +26,7 @@ class SolidGPSCoordinator(DataUpdateCoordinator):
 
     async def _async_update_data(self) -> dict:
         try:
-            # Refresh dashboard to get latest device_info (battery, status, etc.)
+            # Refresh dashboard to get updated csrf_token / device list
             await self.hass.async_add_executor_job(self.api.refresh)
 
             data = {}
@@ -34,8 +34,14 @@ class SolidGPSCoordinator(DataUpdateCoordinator):
                 tracking = await self.hass.async_add_executor_job(
                     self.api.get_tracking_data, imei
                 )
+                # New API: response is {success, status, data: {devices: {imei: {...}}}}
+                device_data = {}
+                if isinstance(tracking, dict) and tracking.get("success"):
+                    device_data = tracking.get("data", {}).get("devices", {}).get(imei, {})
+                # Merge static dashboard info (nickname, color, etc.) with live tracking data
+                merged = {**self.api.devices[imei], **device_data}
                 data[imei] = {
-                    "device_info": self.api.devices[imei],
+                    "device_info": merged,
                     "tracking": tracking,
                 }
             return data

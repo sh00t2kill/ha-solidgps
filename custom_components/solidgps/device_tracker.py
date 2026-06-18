@@ -12,11 +12,11 @@ from .coordinator import SolidGPSCoordinator
 
 
 def _latest_gps_point(tracking: dict, imei: str) -> dict | None:
-    """Return the GPS point with the highest UTC value for a device."""
+    """Return the GPS point with the highest utc value for a device."""
     try:
-        gps_data = tracking["Results"][imei]["gps_data"]
+        gps_data = tracking["data"]["devices"][imei]["gps_data"]
         if gps_data:
-            return max(gps_data, key=lambda p: p.get("UTC", 0))
+            return max(gps_data, key=lambda p: p.get("utc", 0))
     except (KeyError, TypeError):
         pass
     return None
@@ -52,9 +52,9 @@ class SolidGPSTracker(CoordinatorEntity[SolidGPSCoordinator], TrackerEntity):
         info = self.coordinator.data[self._imei]["device_info"]
         return {
             "identifiers": {(DOMAIN, self._imei)},
-            "name": info.get("Nickname", self._imei),
+            "name": info.get("nickname", self._imei),
             "manufacturer": "Solid GPS",
-            "model": info.get("DeviceType"),
+            "model": info.get("device_type"),
         }
 
     @property
@@ -76,7 +76,7 @@ class SolidGPSTracker(CoordinatorEntity[SolidGPSCoordinator], TrackerEntity):
 
     @property
     def battery_level(self) -> int | None:
-        return self.coordinator.data[self._imei]["device_info"].get("BatteryStatus")
+        return self.coordinator.data[self._imei]["device_info"].get("bat_status")
 
     @property
     def extra_state_attributes(self) -> dict:
@@ -85,28 +85,28 @@ class SolidGPSTracker(CoordinatorEntity[SolidGPSCoordinator], TrackerEntity):
 
         attrs = {}
 
-        # Top-level response metadata
-        for key in ("SEpoch", "FEpoch"):
-            if key in tracking:
-                attrs[key.lower()] = tracking[key]
+        # Top-level response epoch window
+        if isinstance(tracking, dict) and tracking.get("success"):
+            data_block = tracking.get("data", {})
+            for key in ("start_epoch", "end_epoch"):
+                if key in data_block:
+                    attrs[key] = data_block[key]
 
-        # Device-level fields from Results
-        try:
-            device_result = tracking["Results"][self._imei]
-            for key in ("active_subscription", "color", "letter_index", "device_type"):
-                if key in device_result:
-                    attrs[key] = device_result[key]
-            attrs["gps_history_points"] = len(device_result.get("gps_data", []))
-        except (KeyError, TypeError):
-            pass
+        # Device-level fields from tracking
+        device_info = self.coordinator.data[self._imei]["device_info"]
+        for key in ("active_subscription", "color", "letter_index", "device_type"):
+            if key in device_info:
+                attrs[key] = device_info[key]
+        gps_list = device_info.get("gps_data", [])
+        attrs["gps_history_points"] = len(gps_list)
 
         # Latest GPS point fields
         if point:
             attrs["speed_over_ground"] = point.get("sog")
             attrs["course_over_ground"] = point.get("cog")
-            attrs["gps_utc"] = point.get("UTC")
+            attrs["gps_utc"] = point.get("utc")
             attrs["gps_quality"] = point.get("quality")
-            attrs["row_index"] = point.get("rowIndex")
+            attrs["row_index"] = point.get("row_index")
 
         return attrs
 

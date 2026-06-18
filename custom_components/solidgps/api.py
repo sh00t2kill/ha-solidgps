@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import re
 import json
+import time
 import requests
 
 _LOGGER = logging.getLogger(__name__)
@@ -22,7 +23,8 @@ class SolidGPS:
     BASE_URL = "https://www.solidgps.com"
     LOGIN_URL = f"{BASE_URL}/login/"
     DASHBOARD_URL = f"{BASE_URL}/dashboard/"
-    REQUEST_URL = f"{BASE_URL}/custom-monorepo/dashboard/request.php"
+    HISTORY_URL = f"{BASE_URL}/custom-monorepo/dashboard-page/api/dashboard-api.php?endpoint=history"
+    REFRESH_API_URL = f"{BASE_URL}/custom-monorepo/dashboard-page/api/dashboard-api.php?endpoint=refresh"
 
     def __init__(self, username: str, password: str, account_id: str | None = None, imei: str | None = None):
         self.username = username
@@ -121,55 +123,61 @@ class SolidGPS:
         })
         resp.raise_for_status()
 
-        account_match = re.search(r'var account_info\s*=\s*(\{[^;]+\})', resp.text)
-        if account_match:
-            account_info = json.loads(account_match.group(1))
-            self.auth_code = account_info.get("AuthCode")
-            if self.account_id is None:
-                self.account_id = str(account_info.get("AccountID", ""))
-            _LOGGER.debug("account_id=%s", self.account_id)
+        # Parse window.DASHBOARD_DATA = {...} — valid JSON blob introduced in 2026 redesign
+        dashboard_match = re.search(r'window\.DASHBOARD_DATA\s*=\s*(\{)', resp.text)
+        if dashboard_match:
+            try:
+                dashboard_data, _ = json.JSONDecoder().raw_decode(resp.text, dashboard_match.start(1))
+                user = dashboard_data.get("user", {})
+                if self.account_id is None:
+                    self.account_id = str(user.get("AccountID", ""))
+                _LOGGER.debug("account_id=%s", self.account_id)
+                devices_list = dashboard_data.get("devices", [])
+                self.devices = {d["imei"]: d for d in devices_list if "imei" in d}
+                if self.imei is None and self.devices:
+                    self.imei = next(iter(self.devices))
+                _LOGGER.debug("devices=%s  default=%s", list(self.devices.keys()), self.imei)
+            except (json.JSONDecodeError, KeyError) as exc:
+                _LOGGER.warning("Failed to parse DASHBOARD_DATA: %s", exc)
         else:
-            _LOGGER.warning("account_info not found in dashboard HTML")
+            _LOGGER.warning("DASHBOARD_DATA not found in dashboard HTML")
 
-        device_match = re.search(r'var device_info\s*=\s*(\{.+?\});', resp.text)
-        if device_match:
-            self.devices = json.loads(device_match.group(1))
-            if self.imei is None:
-                self.imei = next(iter(self.devices))
-            _LOGGER.debug("devices=%s  default=%s", list(self.devices.keys()), self.imei)
+        # Extract csrf_token from window.PHP_CONFIG (JS object literal, not valid JSON)
+        csrf_match = re.search(r'csrf_token\s*:\s*["\']([^"\']+)["\']', resp.text)
+        if csrf_match:
+            self.auth_code = csrf_match.group(1)
+            _LOGGER.debug("auth_code (csrf_token)=%s", self.auth_code)
         else:
-            _LOGGER.warning("device_info not found in dashboard HTML")
+            _LOGGER.warning("csrf_token not found in dashboard HTML")
 
     # ------------------------------------------------------------------
     # Data requests
     # ------------------------------------------------------------------
 
-    def get_tracking_data(self, imei: str | None = None, start_epoch: str = "", end_epoch: str = "", tracking_code: str = "") -> dict | list | str:
+    def get_tracking_data(self, imei: str | None = None, start_epoch: int | None = None, end_epoch: int | None = None) -> dict | list | str:
         """Fetch GPS tracking data for a device."""
-        if not self.auth_code or not self.account_id:
+        if not self.account_id:
             raise RuntimeError("Not logged in — call login() first")
         target_imei = imei or self.imei
         if not target_imei:
             raise RuntimeError("No IMEI specified and no default device available")
-
-        response = self._session.get(
-            self.REQUEST_URL,
-            params={
+        now = int(time.time())
+        response = self._session.post(
+            self.HISTORY_URL,
+            data={
                 "IMEI": target_imei,
-                "account_id": self.account_id,
-                "auth_code": self.auth_code,
-                "startEpoch": start_epoch,
-                "endEpoch": end_epoch,
-                "tracking_code": tracking_code,
+                "start_epoch": start_epoch if start_epoch is not None else now - 86400,
+                "end_epoch": end_epoch if end_epoch is not None else now,
             },
             headers={
                 "accept": "*/*",
+                "content-type": "application/x-www-form-urlencoded",
+                "origin": self.BASE_URL,
                 "priority": "u=1, i",
                 "referer": self.DASHBOARD_URL,
                 "sec-fetch-dest": "empty",
                 "sec-fetch-mode": "cors",
                 "sec-fetch-site": "same-origin",
-                "x-requested-with": "XMLHttpRequest",
                 **BROWSER_HEADERS,
             },
         )
@@ -186,4 +194,5 @@ class SolidGPS:
         target_imei = imei or self.imei
         if not target_imei or target_imei not in self.devices:
             raise RuntimeError(f"IMEI {target_imei!r} not found in devices")
-        return self.devices[target_imei].get("BatteryStatus")
+        device = self.devices[target_imei]
+        return device.get("bat_status")
