@@ -166,7 +166,7 @@ class SolidGPS:
             self.HISTORY_URL,
             data={
                 "IMEI": target_imei,
-                "start_epoch": start_epoch if start_epoch is not None else now - 86400,
+                "start_epoch": start_epoch if start_epoch is not None else now - 604800,
                 "end_epoch": end_epoch if end_epoch is not None else now,
             },
             headers={
