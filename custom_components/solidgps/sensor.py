@@ -107,7 +107,10 @@ class SolidGPSLastUpdateSensor(_SolidGPSBaseSensor):
 
     @property
     def native_value(self) -> datetime.datetime | None:
-        epoch = self._info().get("latest_utc")
+        gps_data = self._info().get("gps_data", [])
+        if not gps_data:
+            return None
+        epoch = max(p.get("utc", 0) for p in gps_data)
         if epoch:
             return datetime.datetime.fromtimestamp(epoch, tz=datetime.timezone.utc)
         return None
