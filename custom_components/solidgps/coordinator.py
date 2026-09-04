@@ -17,6 +17,8 @@ class SolidGPSCoordinator(DataUpdateCoordinator):
 
     def __init__(self, hass: HomeAssistant, api: SolidGPS) -> None:
         self.api = api
+        self._cursor: dict[str, str] = {}
+        self._live_fix: dict[str, dict] = {}
         super().__init__(
             hass,
             _LOGGER,
@@ -40,6 +42,27 @@ class SolidGPSCoordinator(DataUpdateCoordinator):
                     device_data = tracking.get("data", {}).get("devices", {}).get(imei, {})
                 # Merge static dashboard info (nickname, color, etc.) with live tracking data
                 merged = {**self.api.devices[imei], **device_data}
+
+                # Poll the lightweight refresh endpoint for the freshest GPS fix.
+                # It only returns a device entry when something new was reported,
+                # so keep the last known fix/cursor around between update cycles.
+                refresh_resp = await self.hass.async_add_executor_job(
+                    self.api.get_refresh_data, imei, self._cursor.get(imei)
+                )
+                if isinstance(refresh_resp, dict) and refresh_resp.get("success"):
+                    r_data = refresh_resp.get("data", {})
+                    if r_data.get("update_time"):
+                        self._cursor[imei] = r_data["update_time"]
+                    r_devices = r_data.get("devices", {})
+                    r_device = r_devices.get(imei) if isinstance(r_devices, dict) else None
+                    if r_device and r_device.get("gps_data"):
+                        self._live_fix[imei] = max(
+                            r_device["gps_data"], key=lambda p: p.get("utc", 0)
+                        )
+
+                if imei in self._live_fix:
+                    merged["live_fix"] = self._live_fix[imei]
+
                 data[imei] = {
                     "device_info": merged,
                     "tracking": tracking,

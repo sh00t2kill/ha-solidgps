@@ -5,6 +5,7 @@ import logging
 import re
 import json
 import time
+from datetime import datetime, timedelta, timezone
 import requests
 
 _LOGGER = logging.getLogger(__name__)
@@ -143,12 +144,13 @@ class SolidGPS:
             _LOGGER.warning("DASHBOARD_DATA not found in dashboard HTML")
 
         # Extract csrf_token from window.PHP_CONFIG (JS object literal, not valid JSON)
+        # Not currently sent with any request, so its absence is not fatal.
         csrf_match = re.search(r'csrf_token\s*:\s*["\']([^"\']+)["\']', resp.text)
         if csrf_match:
             self.auth_code = csrf_match.group(1)
             _LOGGER.debug("auth_code (csrf_token)=%s", self.auth_code)
         else:
-            _LOGGER.warning("csrf_token not found in dashboard HTML")
+            _LOGGER.debug("csrf_token not found in dashboard HTML")
 
     # ------------------------------------------------------------------
     # Data requests
@@ -195,4 +197,46 @@ class SolidGPS:
         if not target_imei or target_imei not in self.devices:
             raise RuntimeError(f"IMEI {target_imei!r} not found in devices")
         device = self.devices[target_imei]
-        return device.get("bat_status")
+        return device.get("batteryStatus")
+
+    def get_refresh_data(self, imei: str | None = None, update_time: str | None = None) -> dict | str:
+        """Poll the lightweight refresh endpoint for GPS fixes reported since update_time.
+
+        This is the same endpoint the live dashboard polls every few seconds; it only
+        returns a device entry when a new fix has been reported since update_time, so
+        callers should keep using the last response's data.update_time as the next
+        cursor to avoid re-fetching data that hasn't changed.
+        """
+        if not self.account_id:
+            raise RuntimeError("Not logged in — call login() first")
+        target_imei = imei or self.imei
+        if not target_imei:
+            raise RuntimeError("No IMEI specified and no default device available")
+        response = self._session.post(
+            self.REFRESH_API_URL,
+            data={
+                "IMEI": target_imei,
+                "update_time": update_time or self._default_update_time(),
+            },
+            headers={
+                "accept": "*/*",
+                "content-type": "application/x-www-form-urlencoded",
+                "origin": self.BASE_URL,
+                "priority": "u=1, i",
+                "referer": self.DASHBOARD_URL,
+                "sec-fetch-dest": "empty",
+                "sec-fetch-mode": "cors",
+                "sec-fetch-site": "same-origin",
+                **BROWSER_HEADERS,
+            },
+        )
+        response.raise_for_status()
+        try:
+            return response.json()
+        except ValueError:
+            return response.text
+
+    @staticmethod
+    def _default_update_time() -> str:
+        """Cursor fallback when no prior refresh response exists (e.g. first poll)."""
+        return (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")

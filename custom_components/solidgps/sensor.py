@@ -61,7 +61,7 @@ class _SolidGPSBaseSensor(CoordinatorEntity[SolidGPSCoordinator], SensorEntity):
             "identifiers": {(DOMAIN, self._imei)},
             "name": info.get("nickname", self._imei),
             "manufacturer": "Solid GPS",
-            "model": info.get("device_type"),
+            "model": info.get("deviceType"),
         }
 
     def _info(self):
@@ -80,7 +80,9 @@ class SolidGPSBatterySensor(_SolidGPSBaseSensor):
 
     @property
     def native_value(self) -> int | None:
-        return self._info().get("bat_status")
+        info = self._info()
+        live_fix = info.get("live_fix") or {}
+        return live_fix.get("bat_status", info.get("batteryStatus"))
 
 
 class SolidGPSStatusSensor(_SolidGPSBaseSensor):
@@ -93,7 +95,9 @@ class SolidGPSStatusSensor(_SolidGPSBaseSensor):
 
     @property
     def native_value(self) -> str:
-        raw = self._info().get("dev_status", 0)
+        info = self._info()
+        live_fix = info.get("live_fix") or {}
+        raw = live_fix.get("dev_status", info.get("deviceStatus", 0))
         return DEVICE_STATUS_MAP.get(raw, f"Unknown ({raw})")
 
 
@@ -107,13 +111,12 @@ class SolidGPSLastUpdateSensor(_SolidGPSBaseSensor):
 
     @property
     def native_value(self) -> datetime.datetime | None:
-        gps_data = self._info().get("gps_data", [])
-        if not gps_data:
+        info = self._info()
+        live_fix = info.get("live_fix") or {}
+        epoch_ms = live_fix.get("utc") or info.get("lastUpdateUTC")
+        if not epoch_ms:
             return None
-        epoch = max(p.get("utc", 0) for p in gps_data)
-        if epoch:
-            return datetime.datetime.fromtimestamp(epoch, tz=datetime.timezone.utc)
-        return None
+        return datetime.datetime.fromtimestamp(epoch_ms / 1000, tz=datetime.timezone.utc)
 
 
 class SolidGPSNextUpdateSensor(_SolidGPSBaseSensor):
@@ -126,16 +129,12 @@ class SolidGPSNextUpdateSensor(_SolidGPSBaseSensor):
 
     @property
     def native_value(self) -> datetime.datetime | None:
-        raw = self._info().get("next_update")
-        if not raw:
+        info = self._info()
+        live_fix = info.get("live_fix") or {}
+        epoch_ms = live_fix.get("next_update") or info.get("nextExpectedUTC")
+        if not epoch_ms:
             return None
-        try:
-            # Format: "2026-06-17 22:41:32" — treat as UTC
-            return datetime.datetime.strptime(raw, "%Y-%m-%d %H:%M:%S").replace(
-                tzinfo=datetime.timezone.utc
-            )
-        except ValueError:
-            return None
+        return datetime.datetime.fromtimestamp(epoch_ms / 1000, tz=datetime.timezone.utc)
 
 
 class SolidGPSDistanceSensor(_SolidGPSBaseSensor):
@@ -150,7 +149,7 @@ class SolidGPSDistanceSensor(_SolidGPSBaseSensor):
 
     @property
     def native_value(self) -> int | None:
-        return self._info().get("total_distance")
+        return self._info().get("distanceTravelled")
 
 
 class SolidGPSDistanceKmSensor(_SolidGPSBaseSensor):
@@ -166,7 +165,7 @@ class SolidGPSDistanceKmSensor(_SolidGPSBaseSensor):
 
     @property
     def native_value(self) -> float | None:
-        metres = self._info().get("total_distance")
+        metres = self._info().get("distanceTravelled")
         if metres is None:
             return None
         return round(metres / 1000, 2)

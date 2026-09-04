@@ -11,12 +11,24 @@ from .const import DOMAIN
 from .coordinator import SolidGPSCoordinator
 
 
-def _latest_gps_point(tracking: dict, imei: str) -> dict | None:
-    """Return the GPS point with the highest utc value for a device."""
+def _latest_gps_point(device_info: dict, tracking: dict, imei: str) -> dict | None:
+    """Return the freshest known GPS point for a device.
+
+    Prefers the live refresh-endpoint fix (accurate, updated every poll cycle),
+    then falls back to the history endpoint's gps_data, then cell_data
+    (cell-tower triangulation) when no real GPS fix is available.
+    """
+    live_fix = device_info.get("live_fix")
+    if live_fix:
+        return live_fix
     try:
-        gps_data = tracking["data"]["devices"][imei]["gps_data"]
+        device = tracking["data"]["devices"][imei]
+        gps_data = device.get("gps_data") or []
         if gps_data:
             return max(gps_data, key=lambda p: p.get("utc", 0))
+        cell_data = device.get("cell_data") or []
+        if cell_data:
+            return max(cell_data, key=lambda p: p.get("utc", 0))
     except (KeyError, TypeError):
         pass
     return None
@@ -54,7 +66,7 @@ class SolidGPSTracker(CoordinatorEntity[SolidGPSCoordinator], TrackerEntity):
             "identifiers": {(DOMAIN, self._imei)},
             "name": info.get("nickname", self._imei),
             "manufacturer": "Solid GPS",
-            "model": info.get("device_type"),
+            "model": info.get("deviceType"),
         }
 
     @property
@@ -62,7 +74,8 @@ class SolidGPSTracker(CoordinatorEntity[SolidGPSCoordinator], TrackerEntity):
         return SourceType.GPS
 
     def _gps(self) -> dict | None:
-        return _latest_gps_point(self.coordinator.data[self._imei]["tracking"], self._imei)
+        entry = self.coordinator.data[self._imei]
+        return _latest_gps_point(entry["device_info"], entry["tracking"], self._imei)
 
     @property
     def latitude(self) -> float | None:
@@ -76,7 +89,9 @@ class SolidGPSTracker(CoordinatorEntity[SolidGPSCoordinator], TrackerEntity):
 
     @property
     def battery_level(self) -> int | None:
-        return self.coordinator.data[self._imei]["device_info"].get("bat_status")
+        info = self.coordinator.data[self._imei]["device_info"]
+        live_fix = info.get("live_fix") or {}
+        return live_fix.get("bat_status", info.get("batteryStatus"))
 
     @property
     def extra_state_attributes(self) -> dict:
@@ -94,11 +109,15 @@ class SolidGPSTracker(CoordinatorEntity[SolidGPSCoordinator], TrackerEntity):
 
         # Device-level fields from tracking
         device_info = self.coordinator.data[self._imei]["device_info"]
-        for key in ("active_subscription", "color", "letter_index", "device_type"):
+        for key in ("activeSubscription", "color", "deviceType"):
             if key in device_info:
                 attrs[key] = device_info[key]
-        gps_list = device_info.get("gps_data", [])
+        gps_list = device_info.get("gps_data") or []
         attrs["gps_history_points"] = len(gps_list)
+        attrs["using_live_fix"] = bool(device_info.get("live_fix"))
+        attrs["using_cell_location"] = (
+            not device_info.get("live_fix") and not gps_list and bool(device_info.get("cell_data"))
+        )
 
         # Latest GPS point fields
         if point:
