@@ -77,7 +77,7 @@ class SolidGPS:
 
         if match:
             nonce = next(g for g in match.groups() if g)
-            _LOGGER.debug("Nonce: %s", nonce)
+            _LOGGER.debug("Login nonce found")
             return nonce
 
         raise RuntimeError("Could not find login nonce on login page")
@@ -148,7 +148,7 @@ class SolidGPS:
         csrf_match = re.search(r'csrf_token\s*:\s*["\']([^"\']+)["\']', resp.text)
         if csrf_match:
             self.auth_code = csrf_match.group(1)
-            _LOGGER.debug("auth_code (csrf_token)=%s", self.auth_code)
+            _LOGGER.debug("auth_code (csrf_token) found")
         else:
             _LOGGER.debug("csrf_token not found in dashboard HTML")
 
