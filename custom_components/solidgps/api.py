@@ -236,7 +236,11 @@ class SolidGPS:
         except ValueError:
             return response.text
 
-    @staticmethod
-    def _default_update_time() -> str:
+    # How far back the first refresh poll looks. A device that has been quiet for
+    # more than a day (sleeping tracker) would otherwise return nothing at all.
+    INITIAL_LOOKBACK_DAYS = 30
+
+    @classmethod
+    def _default_update_time(cls) -> str:
         """Cursor fallback when no prior refresh response exists (e.g. first poll)."""
-        return (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
+        return (datetime.now(timezone.utc) - timedelta(days=cls.INITIAL_LOOKBACK_DAYS)).strftime("%Y-%m-%d %H:%M:%S")

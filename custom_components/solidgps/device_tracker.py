@@ -11,27 +11,32 @@ from .const import DOMAIN
 from .coordinator import SolidGPSCoordinator
 
 
-def _latest_gps_point(device_info: dict, tracking: dict, imei: str) -> dict | None:
-    """Return the freshest known GPS point for a device.
+def _latest_point_and_source(device_info: dict, tracking: dict, imei: str) -> tuple[dict | None, str | None]:
+    """Return the newest known location (by utc) and which source it came from.
 
-    Prefers the live refresh-endpoint fix (accurate, updated every poll cycle),
-    then falls back to the history endpoint's gps_data, then cell_data
-    (cell-tower triangulation) when no real GPS fix is available.
+    Candidates are the live refresh-endpoint fix, the history endpoint's
+    gps_data, and cell_data (cell-tower triangulation). The newest timestamp
+    wins, so a stale cell fix never overrides a more recent GPS fix.
     """
+    candidates: list[tuple[str, dict]] = []
     live_fix = device_info.get("live_fix")
     if live_fix:
-        return live_fix
+        candidates.append(("refresh", live_fix))
     try:
         device = tracking["data"]["devices"][imei]
-        gps_data = device.get("gps_data") or []
-        if gps_data:
-            return max(gps_data, key=lambda p: p.get("utc", 0))
-        cell_data = device.get("cell_data") or []
-        if cell_data:
-            return max(cell_data, key=lambda p: p.get("utc", 0))
+        candidates += [("history_gps", p) for p in device.get("gps_data") or []]
+        candidates += [("history_cell", p) for p in device.get("cell_data") or []]
     except (KeyError, TypeError):
         pass
-    return None
+    if not candidates:
+        return None, None
+    source, point = max(candidates, key=lambda c: c[1].get("utc", 0))
+    return point, source
+
+
+def _latest_gps_point(device_info: dict, tracking: dict, imei: str) -> dict | None:
+    """Return the freshest known location point for a device."""
+    return _latest_point_and_source(device_info, tracking, imei)[0]
 
 
 async def async_setup_entry(
@@ -114,10 +119,10 @@ class SolidGPSTracker(CoordinatorEntity[SolidGPSCoordinator], TrackerEntity):
                 attrs[key] = device_info[key]
         gps_list = device_info.get("gps_data") or []
         attrs["gps_history_points"] = len(gps_list)
-        attrs["using_live_fix"] = bool(device_info.get("live_fix"))
-        attrs["using_cell_location"] = (
-            not device_info.get("live_fix") and not gps_list and bool(device_info.get("cell_data"))
-        )
+        _, source = _latest_point_and_source(device_info, tracking, self._imei)
+        attrs["location_source"] = source
+        attrs["using_live_fix"] = source == "refresh"
+        attrs["using_cell_location"] = source == "history_cell"
 
         # Latest GPS point fields
         if point:
