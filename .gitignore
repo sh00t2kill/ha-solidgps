@@ -19,3 +19,6 @@ session_cookies.json
 
 # macOS
 .DS_Store
+
+# Local credentials for dev scripts
+credentials.py
