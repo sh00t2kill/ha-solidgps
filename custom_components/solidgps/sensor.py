@@ -16,6 +16,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import SolidGPSCoordinator
+from .device_tracker import _latest_gps_point
 
 # DeviceStatus values observed from the dashboard frontend
 DEVICE_STATUS_MAP = {
@@ -111,9 +112,12 @@ class SolidGPSLastUpdateSensor(_SolidGPSBaseSensor):
 
     @property
     def native_value(self) -> datetime.datetime | None:
-        info = self._info()
-        live_fix = info.get("live_fix") or {}
-        epoch_ms = live_fix.get("utc") or info.get("lastUpdateUTC")
+        # Use the same newest-point logic as the device tracker so this matches
+        # the location (and dashboard) even when the newest fix is a cell fix.
+        entry = self.coordinator.data[self._imei]
+        info = entry["device_info"]
+        point = _latest_gps_point(info, entry["tracking"], self._imei)
+        epoch_ms = (point or {}).get("utc") or info.get("lastUpdateUTC")
         if not epoch_ms:
             return None
         return datetime.datetime.fromtimestamp(epoch_ms / 1000, tz=datetime.timezone.utc)
