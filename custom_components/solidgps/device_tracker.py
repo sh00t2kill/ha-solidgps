@@ -9,6 +9,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import SolidGPSCoordinator
+from .zones import predict_location
 
 
 def _latest_point_and_source(device_info: dict, tracking: dict, imei: str) -> tuple[dict | None, str | None]:
@@ -45,9 +46,13 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator: SolidGPSCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities(
-        SolidGPSTracker(coordinator, imei) for imei in coordinator.data
-    )
+    entities = []
+    for imei in coordinator.data:
+        entities += [
+            SolidGPSTracker(coordinator, imei),
+            SolidGPSPredictedTracker(coordinator, imei),
+        ]
+    async_add_entities(entities)
 
 
 class SolidGPSTracker(CoordinatorEntity[SolidGPSCoordinator], TrackerEntity):
@@ -134,3 +139,60 @@ class SolidGPSTracker(CoordinatorEntity[SolidGPSCoordinator], TrackerEntity):
 
         return attrs
 
+
+
+class SolidGPSPredictedTracker(SolidGPSTracker):
+    """Best-guess location: the real fix when it is the newest, else a predicted one.
+
+    When the newest report is a cell-tower fix, its predicted zones are reduced
+    to the main cluster (outliers dropped) and the centroid is used, with
+    location_accuracy covering the cluster's extent. With no usable zones the
+    cell fix itself is used.
+
+    Entity ID will be device_tracker.<IMEI>_predicted.
+    """
+
+    def __init__(self, coordinator: SolidGPSCoordinator, imei: str) -> None:
+        super().__init__(coordinator, imei)
+        self._attr_unique_id = f"{imei}_predicted"
+        self._attr_name = f"{imei} predicted"  # → device_tracker.<imei>_predicted
+
+    def _resolve(self) -> tuple[dict | None, str | None, dict | None]:
+        """Return (point, source, prediction). prediction is set only when zones were used."""
+        entry = self.coordinator.data[self._imei]
+        point, source = _latest_point_and_source(
+            entry["device_info"], entry["tracking"], self._imei
+        )
+        if point is None or source != "history_cell":
+            return point, source, None
+        zones = (point.get("zones") or {}).get("zones") or []
+        prediction = predict_location(zones)
+        if prediction is None:
+            return point, source, None
+        return {**point, **prediction}, "predicted_zone", prediction
+
+    def _gps(self) -> dict | None:
+        return self._resolve()[0]
+
+    @property
+    def location_accuracy(self) -> float:
+        point, source, prediction = self._resolve()
+        if prediction:
+            return prediction["accuracy"]
+        if source == "history_cell" and point:
+            return point.get("accuracy") or 0
+        return 0
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        attrs = super().extra_state_attributes
+        _, source, prediction = self._resolve()
+        attrs["location_source"] = source
+        attrs["using_live_fix"] = source == "refresh"
+        attrs["using_cell_location"] = source == "history_cell"
+        attrs["predicted"] = prediction is not None
+        if prediction:
+            attrs["zones_used"] = prediction["zones_used"]
+            attrs["zones_excluded"] = prediction["zones_excluded"]
+            attrs["zones_ambiguous"] = prediction["ambiguous"]
+        return attrs

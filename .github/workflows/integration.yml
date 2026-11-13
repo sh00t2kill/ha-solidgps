@@ -1,0 +1,46 @@
+name: Integration test
+
+# Logs in to Solid GPS with the repo secrets and retrieves data via main.py.
+# Uses pull_request (not pull_request_target): PRs from forks get no secrets,
+# so the live test is skipped for them rather than failing.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    name: Login and retrieve data
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      SOLIDGPS_USERNAME: ${{ secrets.USERNAME }}
+      SOLIDGPS_PASSWORD: ${{ secrets.PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check secrets are available
+        id: secrets
+        run: |
+          if [ -z "$SOLIDGPS_USERNAME" ] || [ -z "$SOLIDGPS_PASSWORD" ]; then
+            echo "::notice::USERNAME/PASSWORD secrets not available (fork PR?) - skipping live test"
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-python@v5
+        if: steps.secrets.outputs.available == 'true'
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        if: steps.secrets.outputs.available == 'true'
+        run: pip install requests
+
+      - name: Run main.py
+        if: steps.secrets.outputs.available == 'true'
+        run: python main.py
